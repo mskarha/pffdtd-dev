@@ -38,6 +38,8 @@ class SimMats:
         mat_list.sort()
         mat_list2 = list(mat_files_dict.keys())
         mat_list2.sort()
+        print(f'mat_list={mat_list}')
+        print(f'mat_list2={mat_list2}')
         assert mat_list==mat_list2 #mat dict coming in has to match list from room_geo
 
         save_folder = self.save_folder

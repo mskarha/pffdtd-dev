@@ -42,6 +42,9 @@
 #ifndef _OMP_H
 #include <omp.h>
 #endif
+#ifdef __linux__
+#include <unistd.h> // for sysconf
+#endif
 
 #define CU_DIV_CEIL(x,y) ((DIV_CEIL(x,y)==0)? (1) : (DIV_CEIL(x,y))) //want 0 to map to 1, otherwise kernel errors
 
@@ -900,6 +903,99 @@ double run_sim(const struct SimData *sd)
       printf("Nr_read = %ld\n",Nr_read);
 
       printf("Global memory allocation done\n");
+      
+      // Print memory diagnostics
+      size_t gpu_free_bytes, gpu_total_bytes;
+      gpuErrchk( cudaMemGetInfo(&gpu_free_bytes, &gpu_total_bytes) );
+      size_t gpu_used_bytes = gpu_total_bytes - gpu_free_bytes;
+      
+      // Calculate total GPU memory required for this device
+      size_t gpu_mem_required = 
+         (ghd->Npts)*sizeof(Real) +           // u0
+         (ghd->Npts)*sizeof(Real) +           // u1
+         ghd->Nb*sizeof(int8_t) +              // K_bn
+         ghd->Nbl*sizeof(Real) +               // ssaf_bnl
+         ghd->Nbl*sizeof(Real) +               // u0b
+         ghd->Nbl*sizeof(Real) +               // u1b
+         ghd->Nbl*sizeof(Real) +               // u2b
+         ghd->Nba*sizeof(Real) +               // u2ba
+         ghd->Nbl*MMb*sizeof(Real) +           // vh1
+         ghd->Nbl*MMb*sizeof(Real) +           // gh1
+         ghd->Nr*sizeof(Real) +                // u_out_buf
+         ghd->Nb*sizeof(int64_t) +             // bn_ixyz
+         ghd->Nbl*sizeof(int64_t) +            // bnl_ixyz
+         ghd->Nba*sizeof(int64_t) +            // bna_ixyz
+         ghd->Nba*sizeof(int8_t) +             // Q_bna
+         ghd->Nr*sizeof(int64_t) +             // out_ixyz
+         ghd->Nb*sizeof(uint16_t) +            // adj_bn
+         ghd->Nbl*sizeof(int8_t) +             // mat_bnl
+         sd->Nm*sizeof(Real) +                 // mat_beta
+         sd->Nm*MMb*sizeof(struct MatQuad) +   // mat_quads
+         ghd->Nbm*sizeof(uint8_t);             // bn_mask
+      
+      // Calculate host memory required (for this device's portion)
+      size_t host_mem_required = 
+         ghd->Nb*sizeof(int64_t) +             // bn_ixyz (host)
+         ghd->Nbl*sizeof(int64_t) +            // bnl_ixyz (host)
+         ghd->Nba*sizeof(int64_t) +            // bna_ixyz (host)
+         ghd->Nbm*sizeof(uint8_t) +            // bn_mask (host)
+         ghd->Ns*sizeof(int64_t) +             // in_ixyz (host)
+         ghd->Nr*sizeof(int64_t);              // out_ixyz (host)
+      
+      // Get system memory info (Linux)
+      #ifdef __linux__
+      long pages = sysconf(_SC_PHYS_PAGES);
+      long page_size = sysconf(_SC_PAGE_SIZE);
+      size_t sys_total_bytes = (size_t)pages * (size_t)page_size;
+      
+      // Get available memory (approximate - free + buffers/cache)
+      FILE *meminfo = fopen("/proc/meminfo", "r");
+      size_t sys_free_bytes = 0;
+      if (meminfo) {
+         char line[256];
+         unsigned long mem_avail_kb = 0;
+         while (fgets(line, sizeof(line), meminfo)) {
+            if (sscanf(line, "MemAvailable: %lu kB", &mem_avail_kb) == 1) {
+               sys_free_bytes = (size_t)mem_avail_kb * 1024; // Convert KB to bytes
+               break;
+            }
+         }
+         fclose(meminfo);
+      }
+      #else
+      size_t sys_total_bytes = 0;
+      size_t sys_free_bytes = 0;
+      #endif
+      
+      // Total host memory for all devices (u_out_buf is shared)
+      size_t total_host_mem_required = sd->Nr*sizeof(Real); // u_out_buf (shared across all GPUs)
+      
+      printf("\n");
+      printf("========== MEMORY DIAGNOSTICS (GPU %d) ==========\n", gid);
+      printf("GPU Memory:\n");
+      printf("  Required:  %.2f GB (%.2f MB)\n", gpu_mem_required/(1024.0*1024.0*1024.0), gpu_mem_required/(1024.0*1024.0));
+      printf("  Used:      %.2f GB (%.2f MB)\n", gpu_used_bytes/(1024.0*1024.0*1024.0), gpu_used_bytes/(1024.0*1024.0));
+      printf("  Free:      %.2f GB (%.2f MB)\n", gpu_free_bytes/(1024.0*1024.0*1024.0), gpu_free_bytes/(1024.0*1024.0));
+      printf("  Total:     %.2f GB (%.2f MB)\n", gpu_total_bytes/(1024.0*1024.0*1024.0), gpu_total_bytes/(1024.0*1024.0));
+      if (gpu_mem_required > gpu_free_bytes) {
+         printf("  WARNING: Required memory (%.2f GB) exceeds available (%.2f GB)!\n", 
+                gpu_mem_required/(1024.0*1024.0*1024.0), gpu_free_bytes/(1024.0*1024.0*1024.0));
+      }
+      printf("Host Memory (this device):\n");
+      printf("  Required:  %.2f GB (%.2f MB)\n", host_mem_required/(1024.0*1024.0*1024.0), host_mem_required/(1024.0*1024.0));
+      #ifdef __linux__
+      if (sys_total_bytes > 0) {
+         printf("Host Memory (system-wide):\n");
+         printf("  Required (u_out_buf): %.2f GB (%.2f MB)\n", total_host_mem_required/(1024.0*1024.0*1024.0), total_host_mem_required/(1024.0*1024.0));
+         printf("  Available:            %.2f GB (%.2f MB)\n", sys_free_bytes/(1024.0*1024.0*1024.0), sys_free_bytes/(1024.0*1024.0));
+         printf("  Total:                %.2f GB (%.2f MB)\n", sys_total_bytes/(1024.0*1024.0*1024.0), sys_total_bytes/(1024.0*1024.0));
+         if (total_host_mem_required > sys_free_bytes) {
+            printf("  WARNING: Required host memory (%.2f GB) exceeds available (%.2f GB)!\n", 
+                   total_host_mem_required/(1024.0*1024.0*1024.0), sys_free_bytes/(1024.0*1024.0*1024.0));
+         }
+      }
+      #endif
+      printf("================================================\n");
       printf("\n");
 
       //swapping x and z here (CUDA has first dim contiguous)

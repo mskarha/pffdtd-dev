@@ -48,6 +48,9 @@ def apply_visco_filter(x,Fs,Tc,rh,NdB=120,t_start=None):
     y = np.zeros((x.shape[0],Nt))
     n_start = iceil(t_start*Fs)
     assert(n_start>0)
+    
+    # Ensure n_start doesn't exceed input length
+    n_start = min(n_start, Nt0)
 
     y[:,:n_start] =  x[:,:n_start]
     Tsg2 = 2*Ts*g

@@ -1,0 +1,80 @@
+# Python
+__pycache__/
+*.py[cod]
+*$py.class
+*.so
+.Python
+*.egg-info/
+dist/
+build/
+
+# Virtual environments
+venv/
+venv_pffdtd/
+env/
+ENV/
+.venv
+python/venv_pffdtd/
+
+# Simulation data directories (large files)
+data/sim_data/
+data/models/
+
+# Large output files
+*.h5
+*.vtkhdf
+*.vtm
+*.vtu
+*.pvd
+*.wav
+*.hdf
+
+# Compiled executables
+*.x
+*.exe
+*.out
+*.o
+*.a
+*.so
+
+# Material files (can be large)
+# Uncomment if you want to exclude material files too:
+# data/materials/*.h5
+
+# IDE and editor files
+.vscode/
+.idea/
+*.swp
+*.swo
+*~
+.DS_Store
+
+# Jupyter Notebook
+.ipynb_checkpoints
+
+# pytest
+.pytest_cache/
+.coverage
+htmlcov/
+
+# mypy
+.mypy_cache/
+.dmypy.json
+dmypy.json
+
+# Logs
+*.log
+
+# OS files
+Thumbs.db
+.DS_Store
+
+# Temporary files
+*.tmp
+*.temp
+*.bak
+*.backup
+
+# Test output files
+test_outputs/
+outputs/

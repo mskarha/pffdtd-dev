@@ -230,21 +230,55 @@ class SimComms:
 
         return alpha8,ixyz8
 
-    def check_for_clashes(self,bn_ixyz):
+    def check_for_clashes(self,bn_ixyz,filter_mode=False):
         #scheme implementation designed to only have source/receiver in 'regular' air nodes
-        def _check_for_clashes(_ixyz,bn_ixyz):
+        def _check_for_clashes(_ixyz,bn_ixyz,filter_mode=False):
             ixyz = np.unique(_ixyz) #can have duplicates in receivers
             #could speed this up with a numba routine (don't need to know clashes, just say yes or no)
-            assert np.union1d(ixyz.flat[:],bn_ixyz).size == ixyz.size + bn_ixyz.size
-            self.print(f'intersection with boundaries: passed')
+            union_size = np.union1d(ixyz.flat[:],bn_ixyz).size
+            expected_size = ixyz.size + bn_ixyz.size
+            
+            if union_size == expected_size:
+                self.print(f'intersection with boundaries: passed')
+                return None  # No clashes
+            else:
+                if filter_mode:
+                    # Find clashing indices
+                    clashes = np.intersect1d(ixyz, bn_ixyz)
+                    valid_mask = ~np.isin(_ixyz, clashes)
+                    n_clashes = np.sum(~valid_mask)
+                    self.print(f'intersection with boundaries: {n_clashes} clashes found, filtering...')
+                    return valid_mask
+                else:
+                    assert union_size == expected_size, f'Found {ixyz.size + bn_ixyz.size - union_size} clashes with boundaries'
+                    return None
 
         timer = TimerDict()
         timer.tic('check in_xyz')
         self.print(f'boundary intersection check with in_ixyz..')
-        _check_for_clashes(self.in_ixyz,bn_ixyz)
+        in_valid_mask = _check_for_clashes(self.in_ixyz,bn_ixyz,filter_mode=filter_mode)
+        if in_valid_mask is not None:
+            self.in_ixyz = self.in_ixyz[in_valid_mask]
+            self.in_alpha = self.in_alpha[in_valid_mask]
+            self.in_sigs = self.in_sigs[in_valid_mask]
         self.print(timer.ftoc('check in_xyz'))
-        timer.tic('check in_xyz')
+        timer.tic('check out_xyz')
         self.print(f'boundary intersection check with out_ixyz..')
-        _check_for_clashes(self.out_ixyz,bn_ixyz)
-        self.print(timer.ftoc('check in_xyz'))
+        out_valid_mask = _check_for_clashes(self.out_ixyz,bn_ixyz,filter_mode=filter_mode)
+        if out_valid_mask is not None:
+            # out_ixyz is flattened, need to handle properly
+            # out_ixyz shape is (Nr*8,) where Nr is number of receivers
+            # Each receiver has 8 interpolation points
+            Nr_orig = self.out_alpha.shape[0]
+            out_valid_mask_reshaped = out_valid_mask.reshape(Nr_orig, 8)
+            # A receiver is valid if ALL 8 interpolation points are valid
+            receiver_valid = np.all(out_valid_mask_reshaped, axis=1)
+            # Filter both arrays consistently at receiver level
+            # This ensures out_ixyz.size == out_alpha.size after filtering
+            self.out_alpha = self.out_alpha[receiver_valid]
+            out_ixyz_reshaped = self.out_ixyz.reshape(Nr_orig, 8)
+            self.out_ixyz = out_ixyz_reshaped[receiver_valid].flatten()
+            return receiver_valid  # Return mask for receivers
+        self.print(timer.ftoc('check out_xyz'))
+        return None  # No filtering needed
 

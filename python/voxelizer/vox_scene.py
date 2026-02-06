@@ -322,6 +322,8 @@ class VoxScene:
         self.print(f'{Nbt=}')
 
         #clean up shared memory
+        # Delete numpy array that references shared memory buffer before closing
+        del Nb_proc
         Nb_proc_shm.close()
         Nb_proc_shm.unlink()
         #self.print(f'unlink')

@@ -14,32 +14,31 @@
 from sim_setup import sim_setup
 
 sim_setup(
-    model_json_file='../data/models/Musikverein_ConcertHall/model_export.json',
+    model_json_file='../data/models/person/model_export.json',
     draw_backend='mayavi',
     mat_folder='../data/materials',
-    source_num=3,
+    source_num=1,
     insig_type='impulse',
     diff_source=True,
     mat_files_dict={
-                    'Floor': 'mv_floor.h5',
-                    'Chairs' : 'mv_chairs.h5',
-                    'Plasterboard': 'mv_plasterboard.h5',
-                    'Window': 'mv_window.h5',
-                    'Wood': 'mv_wood.h5',
+                    'rp_mei_posed_001_30k_mat': 'mv_plasterboard.h5',
                     }, #see build_mats.py to set these material impedances from absorption data
-    duration=3.0,
+    duration=0.03,
     Tc=20,
     rh=50,
     fcc_flag=True,
     PPW=7.7, #for 1% phase velocity error at fmax
     fmax=1000.0,
-    save_folder='../data/sim_data/mv_fcc/gpu',
-    save_folder_gpu='../data/sim_data/mv_fcc/gpu',
+    save_folder='../data/sim_data/person/gpu',
+    save_folder_gpu='../data/sim_data/person/gpu',
     compress=3, #apply level-3 GZIP compression to larger h5 files
+    use_receiver_grid=True, #generate 3D grid of receivers for visualization
+    receiver_grid_spacing=0.1, #receiver grid spacing in meters (0.2m gives ~10k receivers, 0.1m gives ~500k - too many!)
+    receiver_grid_boundary_margin=0.01, #minimum distance from boundaries in meters (default: 0.1m)
 )
 
-#then from '../data/sim_data/mv_fcc/gpu' folder, run (relative path for default folder structure):
+#then from '../data/sim_data/person/gpu' folder, run (relative path for default folder structure):
 #   ../../../../c_cuda/fdtd_main_gpu_single.x
 
 #then post-process with something like:
-#   python -m fdtd.process_outputs --data_dir='../data/sim_data/mv_fcc/gpu/' --fcut_lowpass 2500.0 --N_order_lowpass=8 --symmetric --fcut_lowcut 10.0 --N_order_lowcut=4 --air_abs_filter='stokes' --save_wav --plot
+#   python -m fdtd.process_outputs --data_dir='../data/sim_data/person/gpu/' --fcut_lowpass 2500.0 --N_order_lowpass=8 --symmetric --fcut_lowcut 10.0 --N_order_lowcut=4 --air_abs_filter='stokes' --save_wav --plot

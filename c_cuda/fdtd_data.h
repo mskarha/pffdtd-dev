@@ -28,6 +28,9 @@
 #ifndef _HDF5_H
 #include "hdf5.h"
 #endif
+#ifdef __linux__
+#include <unistd.h> // for sysconf
+#endif
 
 //maximum number of RLC branches in freq-dep (FD) boundaries (needed at compile-time for CUDA kernels)
 #define MMb 12 //change as necssary
@@ -675,7 +678,49 @@ void load_sim_data(struct SimData *sd) {
    }
 
    //for outputs
-   mymalloc((void **)&u_out, Nr*Nt*sizeof(double));
+   size_t u_out_size = (size_t)Nr*(size_t)Nt*sizeof(double);
+   printf("\n");
+   printf("========== CRITICAL MEMORY ALLOCATION ==========\n");
+   printf("Allocating u_out array (receiver outputs):\n");
+   printf("  Nr (receivers):     %ld\n", Nr);
+   printf("  Nt (time steps):    %ld\n", Nt);
+   printf("  Size:               %.2f GB (%.2f MB)\n", u_out_size/(1024.0*1024.0*1024.0), u_out_size/(1024.0*1024.0));
+   
+#ifdef __linux__
+   long pages = sysconf(_SC_PHYS_PAGES);
+   long page_size = sysconf(_SC_PAGE_SIZE);
+   size_t sys_total_bytes = (size_t)pages * (size_t)page_size;
+   
+   FILE *meminfo = fopen("/proc/meminfo", "r");
+   size_t sys_free_bytes = 0;
+   if (meminfo) {
+      char line[256];
+      unsigned long mem_avail_kb = 0;
+      while (fgets(line, sizeof(line), meminfo)) {
+         if (sscanf(line, "MemAvailable: %lu kB", &mem_avail_kb) == 1) {
+            sys_free_bytes = (size_t)mem_avail_kb * 1024;
+            break;
+         }
+      }
+      fclose(meminfo);
+   }
+   
+   printf("  System memory available: %.2f GB (%.2f MB)\n", sys_free_bytes/(1024.0*1024.0*1024.0), sys_free_bytes/(1024.0*1024.0));
+   printf("  System memory total:     %.2f GB (%.2f MB)\n", sys_total_bytes/(1024.0*1024.0*1024.0), sys_total_bytes/(1024.0*1024.0));
+   
+   if (u_out_size > sys_free_bytes) {
+      printf("\n");
+      printf("  *** ERROR: Required memory (%.2f GB) exceeds available (%.2f GB)! ***\n", 
+             u_out_size/(1024.0*1024.0*1024.0), sys_free_bytes/(1024.0*1024.0*1024.0));
+      printf("  *** This allocation will likely fail or cause OOM kill! ***\n");
+      printf("  *** Consider reducing receiver count (Nr) or time steps (Nt) ***\n");
+      printf("\n");
+   }
+#endif
+   printf("================================================\n");
+   printf("\n");
+   
+   mymalloc((void **)&u_out, u_out_size);
    /*------------------------
     * ATTACH 
    ------------------------*/
