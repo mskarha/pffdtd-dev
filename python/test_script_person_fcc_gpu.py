@@ -23,17 +23,17 @@ sim_setup(
     mat_files_dict={
                     'rp_mei_posed_001_30k_mat': 'mv_plasterboard.h5',
                     }, #see build_mats.py to set these material impedances from absorption data
-    duration=0.03,
+    duration=0.01,
     Tc=20,
     rh=50,
     fcc_flag=True,
     PPW=7.7, #for 1% phase velocity error at fmax
-    fmax=1000.0,
+    fmax=4000.0,
     save_folder='../data/sim_data/person/gpu',
     save_folder_gpu='../data/sim_data/person/gpu',
     compress=3, #apply level-3 GZIP compression to larger h5 files
     use_receiver_grid=True, #generate 3D grid of receivers for visualization
-    receiver_grid_spacing=0.1, #receiver grid spacing in meters (0.2m gives ~10k receivers, 0.1m gives ~500k - too many!)
+    receiver_grid_spacing=0.05, #receiver grid spacing in meters (0.2m gives ~10k receivers, 0.1m gives ~500k - too many!)
     receiver_grid_boundary_margin=0.01, #minimum distance from boundaries in meters (default: 0.1m)
 )
 
