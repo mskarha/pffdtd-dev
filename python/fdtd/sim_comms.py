@@ -21,6 +21,7 @@ from common.myfuncs import iceil
 import h5py
 from scipy.signal import lfilter,bilinear_zpk
 from numpy import pi,cos,sin
+from tqdm import tqdm
 
 class SimComms: 
     def __init__(self,save_folder):
@@ -123,7 +124,7 @@ class SimComms:
         #many receivers, can have duplicates
         out_alpha = np.zeros((Rxyz.shape[0],8),np.float64) 
         out_ixyz = np.zeros((Rxyz.shape[0],8),dtype=np.int64) 
-        for rr in range(Rxyz.shape[0]):
+        for rr in tqdm(range(Rxyz.shape[0]), desc='rx-grid: prepare receiver pts', ascii=True, leave=False):
             out_alpha[rr],out_ixyz[rr] = self.get_linear_interp_weights(Rxyz[rr])
 
         self.out_alpha = out_alpha
