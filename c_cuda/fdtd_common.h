@@ -77,6 +77,7 @@ void print_progress(uint32_t n, uint32_t Nt, uint64_t Npts, uint64_t Nb,
                      double time_elapsed, double time_elapsed_sample, 
                      double time_elapsed_air, double time_elapsed_sample_air, 
                      double time_elapsed_bn, double time_elapsed_sample_bn, int num_workers);
+void print_loop_progress(const char *desc, int64_t n, int64_t N);
 
 
 //linear indices to sub-indices in 3d, Nz continguous
@@ -98,6 +99,19 @@ void check_inside_grid(int64_t *idx, int64_t N, int64_t Nx, int64_t Ny, int64_t 
       int64_t iz,iy,ix;
       ind2sub3d(idx[i], Nx, Ny, Nz, &ix, &iy, &iz);
    }
+}
+
+// Simple single-line progress for host-side loops (rescale/write after Combined (total)).
+// Updates ~200 times over the loop to avoid flooding stdout.
+void print_loop_progress(const char *desc, int64_t n, int64_t N) {
+   if (N <= 0) return;
+   int64_t step = N / 200;
+   if (step < 1) step = 1;
+   if (n > 0 && (n % step) != 0 && n != N) return;
+   double pcnt = 100.0 * (double)n / (double)N;
+   printf("\r%s: %5.1f%% (%ld/%ld)", desc, pcnt, (long)n, (long)N);
+   if (n >= N) printf("\n");
+   fflush(stdout);
 }
 
 //hacky print progress (like tqdm).. 

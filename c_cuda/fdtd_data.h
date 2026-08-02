@@ -964,6 +964,7 @@ void rescale_output(struct SimData *sd) {
       for (int64_t n=0; n<Nt; n++) {
          u_out[nr*Nt + n] *= infac;
       }
+      print_loop_progress("Rescale outputs", nr + 1, Nr);
    }
 
    sd->u_out   = u_out;
@@ -987,12 +988,15 @@ void write_outputs(struct SimData *sd) {
       for (int64_t n=0; n<Nt; n++) {
          u_out[nr*Nt + n] = sd->u_out[out_reorder[nr]*Nt + n];
       }
+      print_loop_progress("Reorder outputs", nr + 1, Nr);
    }
 
    dims[0] = Nr;
    dims[1] = Nt;
    strcpy(filename, "sim_outs.h5");
    strcpy(dset_str, "u_out");
+   printf("Writing sim_outs.h5...\n");
+   fflush(stdout);
    file = H5Fcreate (filename, H5F_ACC_TRUNC, H5P_DEFAULT, H5P_DEFAULT);
    space = H5Screate_simple (2, dims, NULL);
    dset = H5Dcreate (file, dset_str, H5T_NATIVE_DOUBLE, space, H5P_DEFAULT, H5P_DEFAULT, H5P_DEFAULT);
