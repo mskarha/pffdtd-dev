@@ -23,6 +23,7 @@ from numpy import pi,sqrt
 from numpy.fft import rfft
 from numpy import log10,log2
 from resampy import resample
+from tqdm import tqdm
 from air_abs.visco_filter import apply_visco_filter
 from air_abs.modal_filter import apply_modal_filter
 from air_abs.ola_filter import apply_ola_filter
@@ -50,9 +51,17 @@ class ProcessOutputs:
         rh = h5f['rh'][()]
         h5f.close()
 
-        #read the raw outputs from sim_outs
+        #read the raw outputs from sim_outs (chunked — this is the large load)
         h5f = h5py.File(data_dir / Path('sim_outs.h5'),'r')
-        u_out  = h5f['u_out'][...]
+        dset = h5f['u_out']
+        n_rows = dset.shape[0]
+        row_bytes = int(np.prod(dset.shape[1:])) * dset.dtype.itemsize
+        # ~8 MiB chunks, capped so we still get a useful number of updates
+        chunk = max(1, min(n_rows, (8 * 1024 * 1024) // max(row_bytes, 1)))
+        u_out = np.empty(dset.shape, dtype=dset.dtype)
+        for i in tqdm(range(0, n_rows, chunk), desc='load sim_outs.h5', ascii=True, leave=False):
+            j = min(i + chunk, n_rows)
+            u_out[i:j] = dset[i:j]
         h5f.close()
         self.print('loading done...')
 
