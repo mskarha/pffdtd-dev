@@ -16,6 +16,7 @@ import numpy as np
 from numpy import array as npa
 from pathlib import Path
 import h5py
+from tqdm import tqdm
 
 def generate_receiver_grid(bmin, bmax, spacing, boundary_margin=0.1):
     """
@@ -122,7 +123,7 @@ def filter_receivers_by_boundaries(Rxyz, bn_ixyz, xv, yv, zv, h, boundary_margin
     
     # Expand boundary set to include neighbors
     expanded_bn_set = set(bn_set)
-    for bn_idx in bn_set:
+    for bn_idx in tqdm(bn_set, desc='rx-grid: expand boundary set', ascii=True, leave=False):
         ix, iy, iz = ind2sub3d(bn_idx, Nx, Ny, Nz)
         for dx, dy, dz in neighbor_offsets:
             ix_n = ix + dx
@@ -135,7 +136,7 @@ def filter_receivers_by_boundaries(Rxyz, bn_ixyz, xv, yv, zv, h, boundary_margin
     # Check each receiver
     valid_mask = np.ones(Rxyz.shape[0], dtype=bool)
     
-    for i in range(Rxyz.shape[0]):
+    for i in tqdm(range(Rxyz.shape[0]), desc='rx-grid: filter receivers', ascii=True, leave=False):
         # Find nearest grid point
         ix = np.flatnonzero(xv >= Rxyz[i, 0])[0] if np.any(xv >= Rxyz[i, 0]) else Nx - 1
         iy = np.flatnonzero(yv >= Rxyz[i, 1])[0] if np.any(yv >= Rxyz[i, 1]) else Ny - 1
