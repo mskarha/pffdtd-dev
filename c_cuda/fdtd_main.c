@@ -49,7 +49,8 @@ int main() {
    run_sim(&sd);
    rescale_output(&sd);
    write_outputs(&sd);
-   print_last_samples(&sd);
+   // Disabled: with receiver grids this dumps 5 samples × Nr lines and floods stdout.
+   // print_last_samples(&sd);
    free_sim_data(&sd);
 
    //print date & time to end
