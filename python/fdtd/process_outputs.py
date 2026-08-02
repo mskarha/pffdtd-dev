@@ -100,8 +100,22 @@ class ProcessOutputs:
         apply_int = self.diff
         Ts = self.Ts
 
-        #just recombine outputs (from trilinear interpolation)
-        r_out = np.sum((u_out*out_alpha.flat[:][:,None]).reshape((*out_alpha.shape,-1)),axis=1)
+        # Recombine outputs (from trilinear interpolation) in chunks so large
+        # receiver grids show progress after "initial process..."
+        Nmic, n_interp = out_alpha.shape
+        assert u_out.shape[0] == Nmic * n_interp
+        Nt = u_out.shape[-1]
+        r_out = np.empty((Nmic, Nt), dtype=u_out.dtype)
+        row_bytes = n_interp * Nt * u_out.dtype.itemsize
+        chunk = max(1, min(Nmic, (8 * 1024 * 1024) // max(row_bytes, 1)))
+        for i in tqdm(range(0, Nmic, chunk), desc='recombine receivers', ascii=True, leave=False):
+            j = min(i + chunk, Nmic)
+            u_chunk = u_out[i * n_interp:j * n_interp]
+            a_chunk = out_alpha[i:j]
+            r_out[i:j] = np.sum(
+                (u_chunk * a_chunk.reshape(-1)[:, None]).reshape((j - i, n_interp, -1)),
+                axis=1,
+            )
 
         h5f = h5py.File(data_dir / Path('sim_outs.h5'),'r+')
         try:
@@ -126,12 +140,18 @@ class ProcessOutputs:
                 #design digital high-pass
                 sos=butter(N_order,2*Ts*fcut,btype='high',output='sos') 
                 self.print('applying lowcut')
-            r_out_f = sosfilt(sos,r_out)
+            r_out_f = np.empty_like(r_out)
+            for i in tqdm(range(0, Nmic, chunk), desc='lowcut filter', ascii=True, leave=False):
+                j = min(i + chunk, Nmic)
+                r_out_f[i:j] = sosfilt(sos, r_out[i:j])
         elif apply_int: #shouldn't really use this without lowcut, but here in case
             b = Ts/2*npa([1,1])
             a = npa([1,1])
-            r_out_f = lfilter(b,a,r_out)
             self.print('applying integrator')
+            r_out_f = np.empty_like(r_out)
+            for i in tqdm(range(0, Nmic, chunk), desc='integrator filter', ascii=True, leave=False):
+                j = min(i + chunk, Nmic)
+                r_out_f[i:j] = lfilter(b, a, r_out[i:j])
         else:
             r_out_f = np.copy(r_out)
         self.print('initial process done')
