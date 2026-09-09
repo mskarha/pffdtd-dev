@@ -2,119 +2,128 @@
 """
 Calculate memory requirements for PFFDTD simulation to help select AWS EC2 instances.
 
+IMPORTANT
+---------
+C's CRITICAL MEMORY ALLOCATION banner reports Nr = out_ixyz.size, which is
+physical receivers × 8 (one trilinear stencil per mic). This script estimates
+physical receivers from the room grid, then multiplies by 8 so the GB number
+matches that banner (u_out = Nr × Nt × 8 bytes for double).
+
 Usage:
-    python calculate_memory_requirements.py --spacing 0.2 --duration 0.03 --fmax 1700 --PPW 7.7
+    python3 calculate_memory_requirements.py \\
+      --spacing 0.15 --duration 0.06 --fmax 1500 --PPW 7.7 \\
+      --room-size 18.18 50.22 11.03 --fcc
 """
 
 import argparse
+import math
+
+# Each physical receiver expands to 8 trilinear interpolation points in
+# SimComms.prepare_receiver_pts / comms_out.h5 Nr (out_ixyz.size).
+INTERP_POINTS_PER_RECEIVER = 8
+
 
 def calculate_receiver_count(room_size, spacing, boundary_margin=0.1):
     """
-    Estimate number of receivers in a 3D grid.
+    Estimate number of *physical* receivers in a 3D grid.
     Uses the same logic as receiver_grid.py:generate_receiver_grid()
-    
+
     Args:
         room_size: Tuple (width, length, height) in meters
         spacing: Receiver grid spacing in meters
         boundary_margin: Minimum distance from boundaries in meters (default: 0.1)
-    
+
     Returns:
-        Approximate number of receivers
+        Approximate number of physical receivers (before boundary filtering)
     """
     w, l, h = room_size
     bmin = [0, 0, 0]
     bmax = [w, l, h]
-    
+
     # Apply boundary margin (matches receiver_grid.py)
     bmin_grid = [bmin[i] + boundary_margin for i in range(3)]
     bmax_grid = [bmax[i] - boundary_margin for i in range(3)]
-    
-    # Generate grid positions (matches receiver_grid.py lines 56-67)
-    import math
+
+    # Generate grid positions (matches receiver_grid.py)
     x_start = math.ceil(bmin_grid[0] / spacing) * spacing
     y_start = math.ceil(bmin_grid[1] / spacing) * spacing
     z_start = math.ceil(bmin_grid[2] / spacing) * spacing
-    
+
     x_end = math.floor(bmax_grid[0] / spacing) * spacing
     y_end = math.floor(bmax_grid[1] / spacing) * spacing
     z_end = math.floor(bmax_grid[2] / spacing) * spacing
-    
-    # Count grid points (matches receiver_grid.py line 65-67)
+
     n_x = int((x_end - x_start) / spacing) + 1
     n_y = int((y_end - y_start) / spacing) + 1
     n_z = int((z_end - z_start) / spacing) + 1
-    
+
     return n_x * n_y * n_z
+
 
 def calculate_time_steps(duration, fmax, PPW, Tc=20, fcc=False):
     """
     Calculate number of time steps using the same formula as sim_consts.py.
-    
+
     Args:
         duration: Simulation duration in seconds
         fmax: Maximum frequency in Hz
         PPW: Points per wavelength
         Tc: Temperature in Celsius (default: 20)
         fcc: Whether FCC scheme is used (default: False)
-    
+
     Returns:
         Number of time steps (Nt)
     """
     # Speed of sound (matches sim_consts.py)
     c = 343.2 * (Tc / 20.0) ** 0.5
-    
-    # Grid spacing based on PPW (matches sim_consts.py line 49)
+
+    # Grid spacing based on PPW (matches sim_consts.py)
     h = c / (fmax * PPW)
-    
-    # CFL number (matches sim_consts.py lines 29-40)
+
+    # CFL number (matches sim_consts.py)
     if fcc:
         l = 1.0
     else:
         l = (1.0 / 3.0) ** 0.5
-    
-    # Back off to remove nyquist mode (matches sim_consts.py line 39)
+
+    # Back off to remove nyquist mode (matches sim_consts.py)
     l *= 0.999
-    l2 = l * l
-    
-    # Time step (matches sim_consts.py line 50)
+
+    # Time step (matches sim_consts.py)
     Ts = h / c * l
-    
-    # Number of time steps (matches sim_comms.py line 67)
-    import math
+
+    # Number of time steps (matches sim_comms.py prepare_source_signals)
     Nt = int(math.ceil(duration / Ts))
-    
+
     return Nt
+
 
 def calculate_memory_requirements(Nr, Nt, precision='double'):
     """
     Calculate memory requirements for simulation.
-    
+
     Args:
-        Nr: Number of receivers
+        Nr: C-engine Nr = out_ixyz.size (interp points), NOT physical mics
         Nt: Number of time steps
         precision: 'single' or 'double' (default: 'double')
-    
+
     Returns:
         Dictionary with memory breakdown
     """
     bytes_per_sample = 8 if precision == 'double' else 4
-    
-    # Main u_out array (receiver outputs)
+
+    # Main u_out array (receiver outputs) — matches CRITICAL MEMORY ALLOCATION
     u_out_size_bytes = Nr * Nt * bytes_per_sample
     u_out_size_gb = u_out_size_bytes / (1024**3)
-    
+
     # GPU memory (per GPU, approximate)
-    # Based on typical simulation: ~60 MB per GPU for grid arrays
     gpu_mem_per_device_mb = 60
-    
+
     # Host memory for other arrays (approximate)
-    # Includes: in_sigs, boundary arrays, material arrays, etc.
-    # Rough estimate: 20-30% of u_out size
     host_overhead_gb = u_out_size_gb * 0.25
-    
-    # Total host memory needed
+
     total_host_mem_gb = u_out_size_gb + host_overhead_gb
-    
+
     return {
         'Nr': Nr,
         'Nt': Nt,
@@ -126,18 +135,13 @@ def calculate_memory_requirements(Nr, Nt, precision='double'):
         'bytes_per_sample': bytes_per_sample
     }
 
+
 def recommend_instance(total_mem_gb):
     """
     Recommend AWS EC2 instance based on memory requirements.
-    
-    Args:
-        total_mem_gb: Total host memory needed in GB
-    
-    Returns:
-        List of recommended instances
     """
     recommendations = []
-    
+
     if total_mem_gb <= 16:
         recommendations.append({
             'instance': 'g5.xlarge',
@@ -174,8 +178,9 @@ def recommend_instance(total_mem_gb):
             'spot_hr': 3.04,
             'suitable': total_mem_gb <= 320
         })
-    
+
     return recommendations
+
 
 def main():
     parser = argparse.ArgumentParser(
@@ -183,17 +188,18 @@ def main():
         formatter_class=argparse.RawDescriptionHelpFormatter,
         epilog="""
 Examples:
-  # Calculate for default room (6x4x3.5m) with 0.2m spacing
-  python calculate_memory_requirements.py --spacing 0.2 --duration 0.03 --fmax 1700 --PPW 7.7
-  
-  # Calculate for custom room size
-  python calculate_memory_requirements.py --spacing 0.1 --duration 0.03 --fmax 1700 --PPW 7.7 --room-size 10 8 4
-  
-  # Use single precision
-  python calculate_memory_requirements.py --spacing 0.2 --duration 0.03 --fmax 1700 --PPW 7.7 --precision single
+  # Cartesian room estimate
+  python3 calculate_memory_requirements.py --spacing 0.2 --duration 0.03 --fmax 1700 --PPW 7.7
+
+  # FCC (matches fcc_flag=True sims — fewer Nt, larger Ts)
+  python3 calculate_memory_requirements.py --spacing 0.15 --duration 0.06 --fmax 1500 --PPW 7.7 \\
+      --room-size 18.18 50.22 11.03 --fcc
+
+  # Use Nr/Nt already written by setup (authoritative)
+  python3 calculate_memory_requirements.py --data-dir /path/to/sim_data_dir
         """
     )
-    
+
     parser.add_argument('--spacing', type=float, default=0.2,
                        help='Receiver grid spacing in meters (default: 0.2)')
     parser.add_argument('--boundary-margin', type=float, default=0.1,
@@ -212,16 +218,23 @@ Examples:
     parser.add_argument('--Tc', type=float, default=20.0,
                        help='Temperature in Celsius (default: 20)')
     parser.add_argument('--fcc', action='store_true',
-                       help='Use FCC scheme (affects CFL number and time step)')
+                       help='Use FCC scheme (affects CFL / Nt; pass this if your sim uses fcc_flag)')
     parser.add_argument('--Nr', type=int, default=None,
-                       help='Override: specify exact number of receivers (skips calculation)')
+                       help='Override: C-engine Nr = out_ixyz.size (interp points). '
+                            'Same number as CRITICAL MEMORY ALLOCATION / comms_out.h5 Nr. '
+                            'Use --physical-receivers if you are passing mic count instead.')
+    parser.add_argument('--physical-receivers', action='store_true',
+                       help='Interpret --Nr as physical mic count and multiply by 8')
     parser.add_argument('--Nt', type=int, default=None,
                        help='Override: specify exact number of time steps (skips calculation)')
     parser.add_argument('--data-dir', type=str, default=None,
-                       help='Read actual Nr and Nt from simulation data directory (comms_out.h5)')
-    
+                       help='Read actual Nr and Nt from simulation data directory (comms_out.h5). '
+                            'Nr there is already ×8 interp points.')
+
     args = parser.parse_args()
-    
+
+    nr_from_comms = False  # True when Nr already means C out_ixyz.size
+
     # Try to read from data directory if provided
     if args.data_dir is not None:
         try:
@@ -235,7 +248,8 @@ Examples:
                     Nt_from_file = int(h5f['Nt'][()])
                 if args.Nr is None:
                     args.Nr = Nr_from_file
-                    print(f"Read Nr from {comms_file}: {Nr_from_file:,}")
+                    nr_from_comms = True
+                    print(f"Read Nr (C interp points) from {comms_file}: {Nr_from_file:,}")
                 if args.Nt is None:
                     args.Nt = Nt_from_file
                     print(f"Read Nt from {comms_file}: {Nt_from_file:,}")
@@ -243,18 +257,45 @@ Examples:
                 print(f"Warning: {comms_file} not found, using calculated values")
         except Exception as e:
             print(f"Warning: Could not read from data directory: {e}")
-    
-    # Calculate or use provided Nr
+
+    # Resolve physical receivers vs C Nr (interp points)
     if args.Nr is not None:
-        Nr = args.Nr
-        print(f"Using provided Nr: {Nr:,}")
+        if nr_from_comms:
+            # already C Nr from comms_out.h5
+            Nr = args.Nr
+            N_physical = Nr // INTERP_POINTS_PER_RECEIVER
+            print(f"Using C Nr from setup: {Nr:,}  (~{N_physical:,} physical receivers)")
+        elif args.physical_receivers:
+            N_physical = args.Nr
+            Nr = N_physical * INTERP_POINTS_PER_RECEIVER
+            print(f"Using provided physical receivers: {N_physical:,}")
+            print(f"  → C Nr (×{INTERP_POINTS_PER_RECEIVER} interp pts): {Nr:,}")
+        else:
+            # --Nr means C Nr (matches CRITICAL MEMORY banner)
+            Nr = args.Nr
+            N_physical = Nr // INTERP_POINTS_PER_RECEIVER
+            print(f"Using provided C Nr (interp points): {Nr:,}")
+            print(f"  → ~{N_physical:,} physical receivers (Nr/{INTERP_POINTS_PER_RECEIVER})")
     else:
         if args.spacing is None:
             parser.error("--spacing required when --Nr not provided")
-        Nr = calculate_receiver_count(args.room_size, args.spacing, args.boundary_margin)
-        print(f"Estimated Nr from room size {args.room_size}m, spacing {args.spacing}m, margin {args.boundary_margin}m: {Nr:,}")
-        print(f"  NOTE: Actual Nr may differ due to boundary filtering. Use --Nr to specify exact value.")
-    
+        N_physical = calculate_receiver_count(
+            args.room_size, args.spacing, args.boundary_margin
+        )
+        Nr = N_physical * INTERP_POINTS_PER_RECEIVER
+        print(
+            f"Estimated physical receivers from room size {args.room_size}m, "
+            f"spacing {args.spacing}m, margin {args.boundary_margin}m: {N_physical:,}"
+        )
+        print(
+            f"  → C Nr (×{INTERP_POINTS_PER_RECEIVER} interp pts): {Nr:,}  "
+            f"[matches CRITICAL MEMORY ALLOCATION Nr]"
+        )
+        print(
+            "  NOTE: Actual physical count may be lower after boundary filtering; "
+            "this is an upper-bound estimate. Use --data-dir or --Nr for exact."
+        )
+
     # Calculate or use provided Nt
     if args.Nt is not None:
         Nt = args.Nt
@@ -265,34 +306,37 @@ Examples:
         Nt = calculate_time_steps(args.duration, args.fmax, args.PPW, args.Tc, args.fcc)
         scheme = "FCC" if args.fcc else "Cartesian"
         print(f"Calculated Nt: {Nt:,} time steps (scheme: {scheme}, Tc: {args.Tc}°C)")
+        if not args.fcc:
+            print("  NOTE: If your sim uses fcc_flag=True, re-run with --fcc (Nt drops ~√3×).")
     print()
-    
-    # Calculate memory requirements
+
+    # Calculate memory requirements using C Nr
     mem_req = calculate_memory_requirements(Nr, Nt, args.precision)
-    
+
     print("=" * 60)
-    print("MEMORY REQUIREMENTS")
+    print("MEMORY REQUIREMENTS  (matches C u_out allocation)")
     print("=" * 60)
-    print(f"Receivers (Nr):           {mem_req['Nr']:,}")
-    print(f"Time steps (Nt):          {mem_req['Nt']:,}")
-    print(f"Precision:                {mem_req['precision']}")
-    print(f"Bytes per sample:         {mem_req['bytes_per_sample']}")
+    print(f"Physical receivers (est.):  {N_physical:,}")
+    print(f"C Nr (interp points):       {mem_req['Nr']:,}   (= physical × {INTERP_POINTS_PER_RECEIVER})")
+    print(f"Time steps (Nt):            {mem_req['Nt']:,}")
+    print(f"Precision:                  {mem_req['precision']}")
+    print(f"Bytes per sample:           {mem_req['bytes_per_sample']}")
     print()
-    print(f"u_out array:              {mem_req['u_out_size_gb']:.2f} GB")
-    print(f"Host overhead (est.):     {mem_req['host_overhead_gb']:.2f} GB")
-    print(f"Total host memory:        {mem_req['total_host_mem_gb']:.2f} GB")
-    print(f"GPU memory (per device):   {mem_req['gpu_mem_per_device_mb']:.2f} MB")
+    print(f"u_out = Nr × Nt × {mem_req['bytes_per_sample']} bytes")
+    print(f"u_out array:                {mem_req['u_out_size_gb']:.2f} GB")
+    print(f"Host overhead (est.):       {mem_req['host_overhead_gb']:.2f} GB")
+    print(f"Total host memory:          {mem_req['total_host_mem_gb']:.2f} GB")
+    print(f"GPU memory (per device):    {mem_req['gpu_mem_per_device_mb']:.2f} MB")
     print()
     print("⚠  IMPORTANT: If actual memory differs, check:")
-    print("   - Actual Nr from simulation output (use --Nr to override)")
-    print("   - Actual Nt from simulation output (use --Nt to override)")
-    print("   - Room bounds (bmin/bmax) may differ from room_size")
-    print("   - Boundary filtering may remove fewer receivers than expected")
+    print("   - Pass --fcc when the sim uses FCC")
+    print("   - Room bounds (bmin/bmax) may differ from --room-size")
+    print("   - Boundary filtering lowers physical receivers (upper-bound here)")
+    print("   - Use --data-dir <sim_folder> after setup for exact Nr/Nt")
     print()
-    
-    # Get recommendations
+
     recommendations = recommend_instance(mem_req['total_host_mem_gb'])
-    
+
     print("=" * 60)
     print("RECOMMENDED AWS EC2 INSTANCES")
     print("=" * 60)
@@ -304,25 +348,36 @@ Examples:
         print(f"  On-demand:     ${rec['on_demand_hr']:.2f}/hour")
         print(f"  Spot (est.):   ${rec['spot_hr']:.2f}/hour (~70% savings)")
         if not rec['suitable']:
-            print(f"  ⚠ Warning: Memory requirement ({mem_req['total_host_mem_gb']:.2f} GB) is close to instance limit ({rec['ram_gb']} GB)")
-    
+            print(
+                f"  ⚠ Warning: Memory requirement ({mem_req['total_host_mem_gb']:.2f} GB) "
+                f"is close to instance limit ({rec['ram_gb']} GB)"
+            )
+
     print()
     print("=" * 60)
     print("COST OPTIMIZATION TIPS")
     print("=" * 60)
     print("1. Use Spot instances for 70-90% cost savings")
     print("2. Increase receiver_grid_spacing to reduce memory:")
-    print(f"   - Current spacing: {args.spacing}m → {Nr:,} receivers")
+    print(
+        f"   - Current spacing: {args.spacing}m → {N_physical:,} physical "
+        f"/ {Nr:,} C-Nr → {mem_req['u_out_size_gb']:.2f} GB u_out"
+    )
     if args.spacing >= 0.1:
         new_spacing = args.spacing * 2
-        new_Nr = calculate_receiver_count(args.room_size, new_spacing)
+        new_phys = calculate_receiver_count(args.room_size, new_spacing, args.boundary_margin)
+        new_Nr = new_phys * INTERP_POINTS_PER_RECEIVER
         new_mem = calculate_memory_requirements(new_Nr, Nt, args.precision)
-        print(f"   - Try {new_spacing}m → {new_Nr:,} receivers → {new_mem['total_host_mem_gb']:.2f} GB")
+        print(
+            f"   - Try {new_spacing}m → {new_phys:,} physical / {new_Nr:,} C-Nr "
+            f"→ {new_mem['u_out_size_gb']:.2f} GB u_out"
+        )
     print("3. Consider single precision if acceptable:")
     if args.precision == 'double':
         single_mem = calculate_memory_requirements(Nr, Nt, 'single')
-        print(f"   - Single precision: {single_mem['total_host_mem_gb']:.2f} GB (50% reduction)")
+        print(f"   - Single precision: {single_mem['u_out_size_gb']:.2f} GB u_out (50% reduction)")
     print("4. Monitor actual memory usage and right-size accordingly")
+
 
 if __name__ == '__main__':
     main()
