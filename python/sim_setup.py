@@ -166,7 +166,7 @@ def sim_setup(
     sim_comms = SimComms(save_folder=save_folder) #reads from cart_grid
     sim_comms.prepare_source_pts(Sxyz)
     sim_comms.prepare_receiver_pts(Rxyz)
-    sim_comms.prepare_source_signals(duration,sig_type=insig_type)
+    sim_comms.prepare_source_signals(duration,sig_type=insig_type,fmax=fmax)
     if diff_source:
         sim_comms.diff_source()
     

@@ -23,6 +23,21 @@ from scipy.signal import lfilter,bilinear_zpk
 from numpy import pi,cos,sin
 from tqdm import tqdm
 
+# Pulse length multiplier for fmax-derived Hann pulses ('hann_fmax'/'dhann_fmax').
+# N = k*SR/fmax puts the first spectral null at 2*fmax/k, so k=4 -> null at fmax/2
+# and roughly -45 dB by fmax (3rd null lands on fmax).
+HANN_FMAX_K = 4.0
+
+def _hann_sym(N):
+    #symmetric Hann, starts and ends at exactly 0
+    n = np.arange(N)
+    return 0.5*(1.0-cos(2*pi*n/(N-1)))
+
+def _dhann_sym(N):
+    #one full cycle of sin, zero-mean (bipolar), starts/ends at 0
+    n = np.arange(N)
+    return 0.5*sin(2*pi*n/(N-1))
+
 class SimComms: 
     def __init__(self,save_folder):
         #will read h,xv,yv,zv from h5 data 
@@ -61,7 +76,7 @@ class SimComms:
         self.in_ixyz = in_ixyz
 
     #a few signals to choose from
-    def prepare_source_signals(self,duration,sig_type='impulse'):
+    def prepare_source_signals(self,duration,sig_type='impulse',fmax=None):
         in_alpha = self.in_alpha
         Ts = self.Ts
 
@@ -87,6 +102,16 @@ class SimComms:
             N = iceil(5e-3/Ts)
             n = np.arange(N)
             in_sig[:N] = 0.5*(1.0-cos(2*pi*n/N))
+        elif sig_type in ('hann_fmax','dhann_fmax'): #band-limited below fmax, for viz
+            assert fmax is not None, f"sig_type={sig_type!r} requires fmax (pass fmax to prepare_source_signals)"
+            SR = 1.0/Ts
+            N = iceil(HANN_FMAX_K*SR/fmax)
+            assert N < Nt, f"fmax-derived pulse ({N} samples) longer than simulation ({Nt} samples)"
+            in_sig[:N] = _hann_sym(N) if sig_type=='hann_fmax' else _dhann_sym(N)
+            self.print(f'{sig_type}: N={N} samples, {N*Ts*1e3:.2f} ms, '
+                       f'{N*self.h:.2f} m, first null ~{2*SR/N:.0f} Hz (fmax={fmax:.0f} Hz)')
+        else:
+            raise ValueError(f'unknown sig_type {sig_type!r}')
 
         in_sigs = in_alpha[:,None]*in_sig[None,:]
 
