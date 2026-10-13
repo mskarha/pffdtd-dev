@@ -971,6 +971,15 @@ void rescale_output(struct SimData *sd) {
 }
 
 //save outputs in HDF5 (to processed subsequently with Python script)
+//
+//Receivers are written in out_reorder order, in blocks of rows, directly into
+//their rows of the HDF5 dataset (hyperslab writes).  The previous version built
+//a full reordered copy of u_out first, which doubled peak host memory (2x Nr*Nt*8
+//bytes) and got the process OOM-killed on large receiver grids.  Peak is now
+//~1x u_out plus one block (WRITE_BLOCK_BYTES).  Resulting file is identical.
+#ifndef WRITE_BLOCK_BYTES
+#define WRITE_BLOCK_BYTES ((int64_t)256*1024*1024)
+#endif
 void write_outputs(struct SimData *sd) {
    //write outputs in correct order
    int64_t *out_reorder = sd->out_reorder;
@@ -979,31 +988,66 @@ void write_outputs(struct SimData *sd) {
    char dset_str[80];
    char filename[80];
    hsize_t dims[2];
+   hsize_t start[2];
+   hsize_t count[2];
    herr_t status;
-   hid_t file, space, dset;
+   hid_t file, space, dset, memspace;
 
-   double *u_out;
-   mymalloc((void **)&u_out, Nt*Nr*sizeof(double));
-   for (int64_t nr=0; nr<Nr; nr++) {
-      for (int64_t n=0; n<Nt; n++) {
-         u_out[nr*Nt + n] = sd->u_out[out_reorder[nr]*Nt + n];
-      }
-      print_loop_progress("Reorder outputs", nr + 1, Nr);
-   }
+   //number of receiver rows per block (at least 1, at most Nr)
+   int64_t Nr_block = WRITE_BLOCK_BYTES / (Nt*(int64_t)sizeof(double));
+   if (Nr_block < 1) Nr_block = 1;
+   if (Nr_block > Nr) Nr_block = Nr;
+   int64_t Nblocks = (Nr + Nr_block - 1) / Nr_block;
+
+   double *u_block;
+   mymalloc((void **)&u_block, Nr_block*Nt*sizeof(double));
 
    dims[0] = Nr;
    dims[1] = Nt;
    strcpy(filename, "sim_outs.h5");
    strcpy(dset_str, "u_out");
-   printf("Writing sim_outs.h5...\n");
+   printf("Writing sim_outs.h5 (%ld receivers per block, %ld blocks, %.1f MB block buffer)...\n",
+          (long)Nr_block, (long)Nblocks, Nr_block*Nt*sizeof(double)/(1024.0*1024.0));
    fflush(stdout);
    file = H5Fcreate (filename, H5F_ACC_TRUNC, H5P_DEFAULT, H5P_DEFAULT);
    space = H5Screate_simple (2, dims, NULL);
    dset = H5Dcreate (file, dset_str, H5T_NATIVE_DOUBLE, space, H5P_DEFAULT, H5P_DEFAULT, H5P_DEFAULT);
-   status = H5Dwrite (dset, H5T_NATIVE_DOUBLE, H5S_ALL, H5S_ALL, H5P_DEFAULT, u_out);
-   if (status != 0) {
-      printf("error writing dataset\n");
-      assert(true==false);
+
+   for (int64_t nr0=0; nr0<Nr; nr0+=Nr_block) {
+      int64_t nrb = Nr - nr0;
+      if (nrb > Nr_block) nrb = Nr_block;
+
+      //gather this block's rows in output order
+      for (int64_t i=0; i<nrb; i++) {
+         memcpy(&u_block[i*Nt], &sd->u_out[out_reorder[nr0+i]*Nt], (size_t)Nt*sizeof(double));
+      }
+
+      //write rows [nr0, nr0+nrb) of the dataset
+      start[0] = (hsize_t)nr0;
+      start[1] = 0;
+      count[0] = (hsize_t)nrb;
+      count[1] = (hsize_t)Nt;
+      status = H5Sselect_hyperslab (space, H5S_SELECT_SET, start, NULL, count, NULL);
+      if (status != 0) {
+         printf("error selecting hyperslab\n");
+         assert(true==false);
+      }
+      memspace = H5Screate_simple (2, count, NULL);
+      status = H5Dwrite (dset, H5T_NATIVE_DOUBLE, memspace, space, H5P_DEFAULT, u_block);
+      if (status != 0) {
+         printf("error writing dataset\n");
+         assert(true==false);
+      }
+      status = H5Sclose (memspace);
+      if (status != 0) {
+         printf("error closing block memory space\n");
+         assert(true==false);
+      }
+      //one progress update per block (block boundaries rarely align with print_loop_progress's step)
+      printf("\rWrite outputs: %5.1f%% (block %ld/%ld)", 100.0*(double)(nr0 + nrb)/(double)Nr,
+             (long)(nr0/Nr_block + 1), (long)Nblocks);
+      if (nr0 + nrb >= Nr) printf("\n");
+      fflush(stdout);
    }
 
    status = H5Dclose (dset);
@@ -1024,8 +1068,8 @@ void write_outputs(struct SimData *sd) {
       assert(true==false);
    }
    printf("wrote output dataset\n");
-   //free this temp array
-   free(u_out);
+   //free the block buffer
+   free(u_block);
 }
 
 #endif
