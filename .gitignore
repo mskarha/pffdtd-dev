@@ -78,3 +78,7 @@ Thumbs.db
 # Test output files
 test_outputs/
 outputs/
+
+# Regression tests: scratch output is ignored, committed goldens are not
+tests/_out/
+!tests/golden/*.h5

@@ -1,0 +1,49 @@
+{
+  "_comment": "Regression-test fixture: 3 x 4 x 2.5 m shoebox. Walls+ceiling are a lossy material (both-sided, sides=3), floor is _RIGID (sides=0). Same schema as the SketchUp RoomExporter output. Hand-written; do not regenerate from SketchUp.",
+  "mats_hash": {
+    "Plasterboard": {
+      "pts": [
+        [0.0, 0.0, 0.0],
+        [3.0, 0.0, 0.0],
+        [3.0, 4.0, 0.0],
+        [0.0, 4.0, 0.0],
+        [0.0, 0.0, 2.5],
+        [3.0, 0.0, 2.5],
+        [3.0, 4.0, 2.5],
+        [0.0, 4.0, 2.5]
+      ],
+      "tris": [
+        [4, 5, 6], [4, 6, 7],
+        [0, 1, 5], [0, 5, 4],
+        [1, 2, 6], [1, 6, 5],
+        [2, 3, 7], [2, 7, 6],
+        [3, 0, 4], [3, 4, 7]
+      ],
+      "sides": [3, 3, 3, 3, 3, 3, 3, 3, 3, 3],
+      "color": [220, 220, 210]
+    },
+    "_RIGID": {
+      "pts": [
+        [0.0, 0.0, 0.0],
+        [3.0, 0.0, 0.0],
+        [3.0, 4.0, 0.0],
+        [0.0, 4.0, 0.0]
+      ],
+      "tris": [
+        [0, 1, 2], [0, 2, 3]
+      ],
+      "sides": [0, 0],
+      "color": [128, 128, 128]
+    }
+  },
+  "sources": [
+    { "xyz": [1.0, 1.3, 1.2], "name": "S1" }
+  ],
+  "receivers": [
+    { "xyz": [2.1, 2.7, 1.5], "name": "R1" },
+    { "xyz": [0.6, 3.2, 0.8], "name": "R2" },
+    { "xyz": [2.4, 0.9, 1.9], "name": "R3" },
+    { "xyz": [1.5, 2.0, 1.25], "name": "R4" }
+  ],
+  "export_datetime": "2026-10-14T00:00:00 (hand-written regression fixture)"
+}

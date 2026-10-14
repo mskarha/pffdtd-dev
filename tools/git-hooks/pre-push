@@ -1,0 +1,63 @@
+#!/bin/bash
+# pre-push hook: run the test suite before anything is pushed to main.
+#
+# Tests the exact commit being pushed, in a temporary detached worktree, so
+# uncommitted changes in your working folder neither help nor hurt.  Pushes to
+# other branches (experimental work) are not tested.
+#
+# Install:  tools/install-git-hooks.sh
+# Requires: python/venv_pffdtd with pytest (see tests/), gcc, make, libhdf5-dev.
+set -uo pipefail
+
+PROTECTED_REF="refs/heads/main"
+ZERO_SHA="0000000000000000000000000000000000000000"
+
+REPO="$(git rev-parse --show-toplevel)"
+PY="$REPO/python/venv_pffdtd/bin/python"
+
+# stdin: one line per ref: <local ref> <local sha> <remote ref> <remote sha>
+to_test=()
+while read -r local_ref local_sha remote_ref remote_sha; do
+   [ "$remote_ref" = "$PROTECTED_REF" ] || continue
+   [ "$local_sha" = "$ZERO_SHA" ] && continue   # deleting the branch: nothing to test
+   to_test+=("$local_sha")
+done
+
+[ ${#to_test[@]} -eq 0 ] && exit 0
+
+if [ ! -x "$PY" ] || ! "$PY" -c 'import pytest' 2>/dev/null; then
+   echo "pre-push: $PY with pytest not found; cannot run tests." >&2
+   echo "pre-push: build the venv (see tests/) or push with --no-verify to skip." >&2
+   exit 1
+fi
+
+for sha in "${to_test[@]}"; do
+   short="$(git rev-parse --short "$sha")"
+   tmp="$(mktemp -d)"
+   wt="$tmp/wt"
+   cleanup() { git -C "$REPO" worktree remove --force "$wt" >/dev/null 2>&1; rm -rf "$tmp"; git -C "$REPO" worktree prune; }
+   trap cleanup EXIT
+
+   if ! git -C "$REPO" worktree add --detach --quiet "$wt" "$sha"; then
+      echo "pre-push: could not check out $short for testing" >&2
+      exit 1
+   fi
+   if [ ! -d "$wt/tests" ]; then
+      echo "pre-push: $short has no tests/ directory; nothing to run." >&2
+      cleanup; trap - EXIT
+      continue
+   fi
+
+   echo "pre-push: testing $short (pushing to main) in a clean checkout..." >&2
+   # Hooks run with GIT_DIR etc. set; clear them so tests see the worktree's own repo state.
+   if ! ( unset GIT_DIR GIT_WORK_TREE GIT_INDEX_FILE GIT_PREFIX
+          cd "$wt" && "$PY" -m pytest tests/ -q -p no:cacheprovider ) >&2; then
+      echo "" >&2
+      echo "pre-push: TESTS FAILED for $short -- push to main aborted." >&2
+      echo "pre-push: fix and re-push, or bypass deliberately with: git push --no-verify" >&2
+      exit 1
+   fi
+   echo "pre-push: $short passed." >&2
+   cleanup; trap - EXIT
+done
+exit 0
