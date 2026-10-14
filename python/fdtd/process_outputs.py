@@ -117,15 +117,6 @@ class ProcessOutputs:
                 axis=1,
             )
 
-        h5f = h5py.File(data_dir / Path('sim_outs.h5'),'r+')
-        try:
-            del h5f['r_out']
-            self.print('overwrite r_out dataset (native sample rate)')
-        except:
-            pass
-        h5f.create_dataset('r_out', data=r_out)
-        h5f.close()
-
         if fcut>0:
             if apply_int:
                 #design combined butter filter with integrator

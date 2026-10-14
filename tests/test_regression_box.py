@@ -17,6 +17,7 @@ Usage:
 The CPU engine is rebuilt with `make cpu_double` on every run.
 Requires gcc, make and libhdf5-dev (see c_cuda/Makefile).
 """
+import hashlib
 import json
 import os
 import shutil
@@ -85,6 +86,14 @@ def _git_commit():
         return 'unknown'
 
 
+def _sha256(path):
+    h = hashlib.sha256()
+    with open(path, 'rb') as f:
+        for block in iter(lambda: f.read(1 << 20), b''):
+            h.update(block)
+    return h.hexdigest()
+
+
 @pytest.fixture(scope='module')
 def pipeline():
     """Run setup -> engine -> process_outputs once; yield the run folder."""
@@ -102,6 +111,7 @@ def pipeline():
     _run(['make', 'cpu_double'], cwd=C_DIR)
     assert ENGINE.exists(), f'engine not built: {ENGINE}'
     _run([str(ENGINE)], cwd=OUT)
+    (OUT / 'sim_outs.h5.sha256').write_text(_sha256(OUT / 'sim_outs.h5'))
 
     # 3. post-processing CLI
     _run([sys.executable, '-m', 'fdtd.process_outputs', '--data_dir', str(OUT)] + PROCESS_ARGS,
@@ -132,6 +142,13 @@ def test_raw_output_structure(pipeline):
         u = u[...]
     assert np.all(np.isfinite(u))
     assert np.max(np.abs(u)) > 0.0
+
+
+def test_raw_output_untouched_by_processing(pipeline):
+    """Post-processing must treat sim_outs.h5 as read-only engine output."""
+    with h5py.File(pipeline / 'sim_outs.h5', 'r') as f:
+        assert set(f.keys()) == {'u_out'}
+    assert _sha256(pipeline / 'sim_outs.h5') == (pipeline / 'sim_outs.h5.sha256').read_text()
 
 
 def test_processed_matches_golden(pipeline):
