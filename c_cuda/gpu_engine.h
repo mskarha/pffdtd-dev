@@ -118,7 +118,8 @@ __global__ void FlipHaloYZ_Xend(Real * __restrict__ u1);
 struct gpuHostData { //arrays on host (for copy), mirrors gpu local data 
    double *in_sigs; //aliased
    Real *u_out_buf; //aliased
-   double *u_out; //aliased 
+   double *u_out; //aliased (NULL if out_float32)
+   float *u_out32; //aliased (NULL unless out_float32)
    Real *ssaf_bnl; //aliased
    int64_t *in_ixyz; //recomputed
    int64_t *out_ixyz; //recomputed
@@ -773,7 +774,8 @@ double run_sim(const struct SimData *sd)
       ghd->mat_bnl   = sd->mat_bnl + Nbl_read;
       ghd->K_bn      = sd->K_bn + Nb_read;
       ghd->Q_bna     = sd->Q_bna + Nba_read;
-      ghd->u_out     = sd->u_out + Nr_read*sd->Nt;
+      ghd->u_out     = sd->u_out ? sd->u_out + Nr_read*sd->Nt : NULL;
+      ghd->u_out32   = sd->u_out32 ? sd->u_out32 + Nr_read*sd->Nt : NULL;
       ghd->u_out_buf = u_out_buf + Nr_read;
 
       //recalculate indices, these are associated host versions to copy over to devices
@@ -1165,8 +1167,15 @@ double run_sim(const struct SimData *sd)
          struct gpuHostData *ghd = &(ghds[gid]);
          gpuErrchk( cudaEventSynchronize(gd->cuEv_readout_end) ); 
          //copy grid points off output buffer
-         for (int64_t nr=0; nr<ghd->Nr; nr++) {
-            ghd->u_out[nr*sd->Nt + n] = (double)(ghd->u_out_buf[nr]);
+         if (ghd->u_out32) {
+            for (int64_t nr=0; nr<ghd->Nr; nr++) {
+               ghd->u_out32[nr*sd->Nt + n] = (float)(ghd->u_out_buf[nr]);
+            }
+         }
+         else {
+            for (int64_t nr=0; nr<ghd->Nr; nr++) {
+               ghd->u_out[nr*sd->Nt + n] = (double)(ghd->u_out_buf[nr]);
+            }
          }
       }
       //synchronise streams

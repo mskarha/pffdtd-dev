@@ -105,7 +105,7 @@ class ProcessOutputs:
         Nmic, n_interp = out_alpha.shape
         assert u_out.shape[0] == Nmic * n_interp
         Nt = u_out.shape[-1]
-        r_out = np.empty((Nmic, Nt), dtype=u_out.dtype)
+        r_out = np.empty((Nmic, Nt), dtype=np.float64) #u_out may be float32 (out_float32 runs)
         row_bytes = n_interp * Nt * u_out.dtype.itemsize
         chunk = max(1, min(Nmic, (8 * 1024 * 1024) // max(row_bytes, 1)))
         for i in tqdm(range(0, Nmic, chunk), desc='recombine receivers', ascii=True, leave=False):

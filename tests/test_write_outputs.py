@@ -63,9 +63,10 @@ def binary(request, tmp_path_factory):
     return exe
 
 
+@pytest.mark.parametrize('precision', ['f64', 'f32'])
 @pytest.mark.parametrize('Nr,Nt,seed', CASES, ids=[f'Nr{c[0]}_Nt{c[1]}' for c in CASES])
-def test_write_outputs_roundtrip(binary, tmp_path, Nr, Nt, seed):
-    res = subprocess.run([str(binary), str(Nr), str(Nt), str(seed)],
+def test_write_outputs_roundtrip(binary, tmp_path, Nr, Nt, seed, precision):
+    res = subprocess.run([str(binary), str(Nr), str(Nt), str(seed), precision],
                          cwd=str(tmp_path), text=True, capture_output=True)
     assert res.returncode == 0, f'harness failed:\n{res.stdout[-3000:]}\n{res.stderr[-1000:]}'
     assert f'VERIFY Nr={Nr} Nt={Nt}: OK' in res.stdout, res.stdout[-3000:]

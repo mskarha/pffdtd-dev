@@ -58,6 +58,7 @@ def sim_setup(
                 use_receiver_grid=False, #generate 3D grid of receivers instead of using JSON receivers
                 receiver_grid_spacing=0.1, #receiver grid spacing in meters (default: 0.1m)
                 receiver_grid_boundary_margin=0.1, #minimum distance from boundaries in meters (default: 0.1m)
+                out_float32=False, #engine stores/writes receiver outputs (u_out) as float32 (half the RAM and disk)
               ):
     assert Tc is not None
     assert rh is not None
@@ -209,7 +210,7 @@ def sim_setup(
     else:
         sim_comms.check_for_clashes(vox_scene.bn_ixyz, filter_mode=False)
     
-    sim_comms.save(compress=compress)
+    sim_comms.save(compress=compress,out_float32=out_float32)
     
     # Save receiver grid metadata for later VTKHDF export
     if use_receiver_grid:

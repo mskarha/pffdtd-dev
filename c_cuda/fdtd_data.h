@@ -52,7 +52,9 @@ struct SimData {
    int8_t *mat_bnl; //material indices for lossy boundary nodes
    int8_t *K_bn; //number of adjacent neighbours, boundary nodesa
    double *in_sigs; //input signals
-   double *u_out; //for output signals
+   double *u_out; //for output signals (NULL if out_float32)
+   float *u_out32; //for output signals if out_float32 (else NULL)
+   int8_t out_float32; //store/write outputs as float32
    int64_t Ns; //number of input grid points
    int64_t Nr; //number of output grid points
    int64_t Nt; //number of samples simulation
@@ -118,7 +120,9 @@ void load_sim_data(struct SimData *sd) {
    double *saf_bn;
    Real *ssaf_bn,*ssaf_bnl;
    double *in_sigs;
-   double *u_out;
+   double *u_out = NULL;
+   float *u_out32 = NULL;
+   int8_t out_float32 = 0;
    double l;
    double l2;
    int8_t fcc_flag;
@@ -336,6 +340,13 @@ void load_sim_data(struct SimData *sd) {
    strcpy(dset_str, "diff");
    read_h5_constant(file, dset_str,(void *)&diff,BOOL);
    printf("diff=%d\n",diff);
+
+   //optional (absent in setups written before it was added -> float64)
+   strcpy(dset_str, "out_float32");
+   if (H5Lexists(file, dset_str, H5P_DEFAULT) > 0) {
+      read_h5_constant(file, dset_str,(void *)&out_float32,INT8);
+   }
+   printf("out_float32=%d\n",out_float32);
 
    //////////////////
    // in_ixyz dataset
@@ -678,12 +689,13 @@ void load_sim_data(struct SimData *sd) {
    }
 
    //for outputs
-   size_t u_out_size = (size_t)Nr*(size_t)Nt*sizeof(double);
+   size_t u_out_size = (size_t)Nr*(size_t)Nt*(out_float32 ? sizeof(float) : sizeof(double));
    printf("\n");
    printf("========== CRITICAL MEMORY ALLOCATION ==========\n");
    printf("Allocating u_out array (receiver outputs):\n");
    printf("  Nr (receivers):     %ld\n", Nr);
    printf("  Nt (time steps):    %ld\n", Nt);
+   printf("  Precision:          %s\n", out_float32 ? "float32" : "float64");
    printf("  Size:               %.2f GB (%.2f MB)\n", u_out_size/(1024.0*1024.0*1024.0), u_out_size/(1024.0*1024.0));
    
 #ifdef __linux__
@@ -720,7 +732,8 @@ void load_sim_data(struct SimData *sd) {
    printf("================================================\n");
    printf("\n");
    
-   mymalloc((void **)&u_out, u_out_size);
+   if (out_float32) mymalloc((void **)&u_out32, u_out_size);
+   else mymalloc((void **)&u_out, u_out_size);
    /*------------------------
     * ATTACH 
    ------------------------*/
@@ -758,6 +771,8 @@ void load_sim_data(struct SimData *sd) {
    sd->in_ixyz   = in_ixyz;
    sd->in_sigs   = in_sigs;
    sd->u_out     = u_out;
+   sd->u_out32   = u_out32;
+   sd->out_float32 = out_float32;
    sd->mat_beta  = mat_beta;
    sd->mat_quads  = mat_quads;
 }
@@ -781,6 +796,7 @@ void free_sim_data(struct SimData *sd) {
    free(sd->out_reorder);
    free(sd->in_sigs);
    free(sd->u_out);
+   free(sd->u_out32);
    free(sd->Mb);
    free(sd->mat_beta);
    free(sd->mat_quads);
@@ -909,13 +925,15 @@ void print_last_samples(struct SimData *sd) {
    int64_t Nt = sd->Nt;
    int64_t Nr = sd->Nr;
    double *u_out = sd->u_out;
+   float *u_out32 = sd->u_out32;
    int64_t *out_reorder = sd->out_reorder;
    //print last samples
    printf("RAW OUTPUTS\n");
    for (int64_t nr=0; nr<Nr; nr++) {
       printf("receiver %ld\n",nr);
       for (int64_t n=Nt-5; n<Nt; n++) {
-         printf("sample %ld: %.16e\n",n,u_out[out_reorder[nr]*Nt + n]);
+         int64_t i = out_reorder[nr]*Nt + n;
+         printf("sample %ld: %.16e\n",n,u_out32 ? (double)u_out32[i] : u_out[i]);
       }
    }
 }
@@ -956,18 +974,24 @@ void scale_input(struct SimData *sd) {
 //undo that scaling
 void rescale_output(struct SimData *sd) {
    double *u_out = sd->u_out;
+   float *u_out32 = sd->u_out32;
    int64_t Nt = sd->Nt;
    int64_t Nr = sd->Nr;
    double infac = sd->infac;
 
    for (int64_t nr=0; nr<Nr; nr++) {
-      for (int64_t n=0; n<Nt; n++) {
-         u_out[nr*Nt + n] *= infac;
+      if (u_out32) {
+         for (int64_t n=0; n<Nt; n++) {
+            u_out32[nr*Nt + n] = (float)((double)u_out32[nr*Nt + n]*infac);
+         }
+      }
+      else {
+         for (int64_t n=0; n<Nt; n++) {
+            u_out[nr*Nt + n] *= infac;
+         }
       }
       print_loop_progress("Rescale outputs", nr + 1, Nr);
    }
-
-   sd->u_out   = u_out;
 }
 
 //save outputs in HDF5 (to processed subsequently with Python script)
@@ -993,25 +1017,32 @@ void write_outputs(struct SimData *sd) {
    herr_t status;
    hid_t file, space, dset, memspace;
 
+   //element type: float32 if outputs were stored that way, else float64
+   hid_t h5type = sd->u_out32 ? H5T_NATIVE_FLOAT : H5T_NATIVE_DOUBLE;
+   size_t esize = sd->u_out32 ? sizeof(float) : sizeof(double);
+   const char *u_src = sd->u_out32 ? (const char *)sd->u_out32 : (const char *)sd->u_out;
+   size_t row_bytes = (size_t)Nt*esize;
+
    //number of receiver rows per block (at least 1, at most Nr)
-   int64_t Nr_block = WRITE_BLOCK_BYTES / (Nt*(int64_t)sizeof(double));
+   int64_t Nr_block = WRITE_BLOCK_BYTES / (int64_t)row_bytes;
    if (Nr_block < 1) Nr_block = 1;
    if (Nr_block > Nr) Nr_block = Nr;
    int64_t Nblocks = (Nr + Nr_block - 1) / Nr_block;
 
-   double *u_block;
-   mymalloc((void **)&u_block, Nr_block*Nt*sizeof(double));
+   char *u_block;
+   mymalloc((void **)&u_block, Nr_block*row_bytes);
 
    dims[0] = Nr;
    dims[1] = Nt;
    strcpy(filename, "sim_outs.h5");
    strcpy(dset_str, "u_out");
-   printf("Writing sim_outs.h5 (%ld receivers per block, %ld blocks, %.1f MB block buffer)...\n",
-          (long)Nr_block, (long)Nblocks, Nr_block*Nt*sizeof(double)/(1024.0*1024.0));
+   printf("Writing sim_outs.h5 (%s, %ld receivers per block, %ld blocks, %.1f MB block buffer)...\n",
+          sd->u_out32 ? "float32" : "float64",
+          (long)Nr_block, (long)Nblocks, Nr_block*row_bytes/(1024.0*1024.0));
    fflush(stdout);
    file = H5Fcreate (filename, H5F_ACC_TRUNC, H5P_DEFAULT, H5P_DEFAULT);
    space = H5Screate_simple (2, dims, NULL);
-   dset = H5Dcreate (file, dset_str, H5T_NATIVE_DOUBLE, space, H5P_DEFAULT, H5P_DEFAULT, H5P_DEFAULT);
+   dset = H5Dcreate (file, dset_str, h5type, space, H5P_DEFAULT, H5P_DEFAULT, H5P_DEFAULT);
 
    for (int64_t nr0=0; nr0<Nr; nr0+=Nr_block) {
       int64_t nrb = Nr - nr0;
@@ -1019,7 +1050,7 @@ void write_outputs(struct SimData *sd) {
 
       //gather this block's rows in output order
       for (int64_t i=0; i<nrb; i++) {
-         memcpy(&u_block[i*Nt], &sd->u_out[out_reorder[nr0+i]*Nt], (size_t)Nt*sizeof(double));
+         memcpy(&u_block[i*row_bytes], &u_src[out_reorder[nr0+i]*row_bytes], row_bytes);
       }
 
       //write rows [nr0, nr0+nrb) of the dataset
@@ -1033,7 +1064,7 @@ void write_outputs(struct SimData *sd) {
          assert(true==false);
       }
       memspace = H5Screate_simple (2, count, NULL);
-      status = H5Dwrite (dset, H5T_NATIVE_DOUBLE, memspace, space, H5P_DEFAULT, u_block);
+      status = H5Dwrite (dset, h5type, memspace, space, H5P_DEFAULT, u_block);
       if (status != 0) {
          printf("error writing dataset\n");
          assert(true==false);

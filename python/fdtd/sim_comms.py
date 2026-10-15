@@ -155,7 +155,7 @@ class SimComms:
         self.out_alpha = out_alpha
         self.out_ixyz = out_ixyz
 
-    def save(self,save_folder=None,compress=None):
+    def save(self,save_folder=None,compress=None,out_float32=False):
         if save_folder is None:
             save_folder = self.save_folder
             assert save_folder.exists()
@@ -190,6 +190,7 @@ class SimComms:
         h5f.create_dataset('Nr', data=np.int64(out_ixyz.size))
         h5f.create_dataset('Nt', data=np.int64(in_sigs.shape[-1]))
         h5f.create_dataset('diff', data=np.int8(self._diff))
+        h5f.create_dataset('out_float32', data=np.int8(out_float32))
         h5f.close()
 
         #reattach updated values

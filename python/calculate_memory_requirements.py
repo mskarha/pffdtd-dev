@@ -7,7 +7,8 @@ IMPORTANT
 C's CRITICAL MEMORY ALLOCATION banner reports Nr = out_ixyz.size, which is
 physical receivers × 8 (one trilinear stencil per mic). This script estimates
 physical receivers from the room grid, then multiplies by 8 so the GB number
-matches that banner (u_out = Nr × Nt × 8 bytes for double).
+matches that banner (u_out = Nr × Nt × 8 bytes, or × 4 with
+sim_setup(out_float32=True); pass --precision single for those runs).
 
 Usage:
     python3 calculate_memory_requirements.py \\
@@ -105,7 +106,7 @@ def calculate_memory_requirements(Nr, Nt, precision='double'):
     Args:
         Nr: C-engine Nr = out_ixyz.size (interp points), NOT physical mics
         Nt: Number of time steps
-        precision: 'single' or 'double' (default: 'double')
+        precision: u_out storage, 'single' (out_float32=True) or 'double' (default)
 
     Returns:
         Dictionary with memory breakdown
@@ -213,8 +214,11 @@ Examples:
     parser.add_argument('--room-size', type=float, nargs=3, default=[6.0, 4.0, 3.5],
                        metavar=('WIDTH', 'LENGTH', 'HEIGHT'),
                        help='Room dimensions in meters: width length height (default: 6 4 3.5)')
-    parser.add_argument('--precision', choices=['single', 'double'], default='double',
-                       help='Floating point precision (default: double)')
+    parser.add_argument('--precision', choices=['single', 'double'], default=None,
+                       help='u_out storage precision: single = sim_setup(out_float32=True), '
+                            'double = default. Independent of the engine build (gpu_single still '
+                            'stores double unless out_float32). With --data-dir, read from '
+                            'comms_out.h5 (default: double)')
     parser.add_argument('--Tc', type=float, default=20.0,
                        help='Temperature in Celsius (default: 20)')
     parser.add_argument('--fcc', action='store_true',
@@ -246,6 +250,11 @@ Examples:
                 with h5py.File(comms_file, 'r') as h5f:
                     Nr_from_file = int(h5f['Nr'][()])
                     Nt_from_file = int(h5f['Nt'][()])
+                    f32_from_file = 'out_float32' in h5f and int(h5f['out_float32'][()]) == 1
+                if args.precision is None:
+                    args.precision = 'single' if f32_from_file else 'double'
+                    print(f"Read out_float32={int(f32_from_file)} from {comms_file}: "
+                          f"u_out stored as {args.precision}")
                 if args.Nr is None:
                     args.Nr = Nr_from_file
                     nr_from_comms = True
@@ -257,6 +266,9 @@ Examples:
                 print(f"Warning: {comms_file} not found, using calculated values")
         except Exception as e:
             print(f"Warning: Could not read from data directory: {e}")
+
+    if args.precision is None:
+        args.precision = 'double'
 
     # Resolve physical receivers vs C Nr (interp points)
     if args.Nr is not None:
@@ -372,10 +384,12 @@ Examples:
             f"   - Try {new_spacing}m → {new_phys:,} physical / {new_Nr:,} C-Nr "
             f"→ {new_mem['u_out_size_gb']:.2f} GB u_out"
         )
-    print("3. Consider single precision if acceptable:")
+    print("3. Store outputs as float32 (sim_setup(..., out_float32=True)):")
     if args.precision == 'double':
         single_mem = calculate_memory_requirements(Nr, Nt, 'single')
-        print(f"   - Single precision: {single_mem['u_out_size_gb']:.2f} GB u_out (50% reduction)")
+        print(f"   - float32 u_out: {single_mem['u_out_size_gb']:.2f} GB (50% reduction, also halves sim_outs.h5)")
+    else:
+        print("   - already assumed (--precision single)")
     print("4. Monitor actual memory usage and right-size accordingly")
 
 

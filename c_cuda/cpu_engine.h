@@ -76,6 +76,7 @@ double run_sim(struct SimData *sd)
    int8_t *Q_bna      = sd->Q_bna;
    double *in_sigs    = sd->in_sigs;
    double *u_out      = sd->u_out;
+   float *u_out32     = sd->u_out32;
    int8_t fcc_flag    = sd->fcc_flag;
    Real *ssaf_bnl   = sd->ssaf_bnl;
    Real *mat_beta   = sd->mat_beta;
@@ -301,9 +302,15 @@ double run_sim(struct SimData *sd)
       }
 
       //read output at current sample
-      for (int64_t nr=0; nr<Nr; nr++) {
-         int64_t ii = out_ixyz[nr];
-         u_out[nr*Nt + n] = (double)u1[ii];
+      if (u_out32) {
+         for (int64_t nr=0; nr<Nr; nr++) {
+            u_out32[nr*Nt + n] = (float)u1[out_ixyz[nr]];
+         }
+      }
+      else {
+         for (int64_t nr=0; nr<Nr; nr++) {
+            u_out[nr*Nt + n] = (double)u1[out_ixyz[nr]];
+         }
       }
 
       //add current sample to next (as per update)
